@@ -33,6 +33,12 @@ public final class PersonaHook extends XposedModule {
     public static final String PREFS = "persona";
 
     public static final String KEY_ENABLED = "enabled";
+    /** 超级小爱会员解锁（定时任务）：默认关闭，与人格替换开关相互独立。 */
+    public static final String KEY_VIP_UNLOCK = "vip_unlock";
+    /** 自动化流程：先规划后执行，成功流程优先复用。默认关闭，与会员解锁相互独立。 */
+    public static final String KEY_FLOW_PLAN = "flow_plan";
+    /** 已记录的成功流程，一行一条「应用|末步目标|Base64(流程原文)」，上限 50 条。 */
+    public static final String KEY_FLOW_STORE = "flow_store";
     public static final String KEY_SOUL = "soul";
     public static final String KEY_FIX_PROMPT = "fix_prompt";
     public static final String KEY_NAME = "name";
@@ -316,6 +322,18 @@ public final class PersonaHook extends XposedModule {
             hookToolDescription(loader);
         } catch (Throwable failure) {
             log(Log.ERROR, TAG, "tool trim skipped: " + failure);
+        }
+        try {
+            hookVipUnlock(loader);
+        } catch (Throwable failure) {
+            // 会员解锁是可选能力：失败时不影响人格等原有功能。
+            log(Log.ERROR, TAG, "vip unlock skipped: " + failure);
+        }
+        try {
+            hookFlowControl(loader);
+        } catch (Throwable failure) {
+            // 流程注入是可选能力：失败时不影响人格、会员解锁等原有功能。
+            log(Log.ERROR, TAG, "flow control skipped: " + failure);
         }
 
         synchronized (installLock) {
@@ -1554,6 +1572,269 @@ public final class PersonaHook extends XposedModule {
 
     private static boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    // ---- 超级小爱会员解锁（定时任务 + 视频生成，共用同一判断） ----
+    //
+    // 问题（超级小爱 8.3.30.4420 / 508003030，实测包内静态分析）：
+    // 非会员让小爱建「定时 AI 任务」时，模型并不是弹一个固定提示，而是说出
+    // 「需要会员才能执行自动化」——包里根本没有这句原话，它是模型根据工具
+    // 返回的拒绝理由现场组织出来的。真正的关卡在本地工具层：
+    //   com.aios.osbot.membership.MembershipRepository.checkTimerAccess()
+    //     -> 枚举 MembershipRepository$b：ALLOWED / BLOCKED_FREE / BLOCKED_UNVERIFIED
+    //     （等级来自账号/服务端刷新，本地只缓存 membership_state）
+    //   com.aios.osbot.tools.system.TimerTool.membershipBlockOrNull()
+    //   com.aios.osbot.tools.system.TimerTool.enabledUpdateMembershipBlockOrNull(boolean)
+    //     -> 非空即挡住创建/修改；BLOCKED_FREE 时模型按内置文案收尾：
+    //        「请到「我的」→「用量与订阅」中，升级会员。」
+    //
+    // 本 hook 只在用户主动打开开关时生效，且与人格替换开关相互独立：
+    //   - checkTimerAccess -> ALLOWED（覆盖创建与执行两侧共用的同一判断）
+    //   - membershipBlockOrNull / enabledUpdateMembershipBlockOrNull -> null（=不挡）
+    // 这两个都是 Kotlin suspend 方法，Java 签名是 (Continuation) -> Object；
+    // 未挂起时直接返回结果对象即可，返回 null / 枚举常量就是正常返回值，
+    // 不是绕过协程。其它功能（人格、工具筛选、描述瘦身）一行未动。
+    //
+    // 诚实边界（必须写进 README，不能打包票）：
+    //   - 创建时放行，不等于到点一定执行：TimerAlarmReceiver /
+    //     TaskForegroundService 手里也有会员仓库，日志里有
+    //     「One-time timer, pausing until membership can be verified」和
+    //     timer_skipped_membership_required / unverified，建好的任务到点
+    //     仍可能被跳过，只能真机实测。
+    //   - 场景自动化没有在包里找到独立的会员关：如果场景是走定时任务去
+    //     执行，本 hook 就覆盖；如果走米家云端建规则，本地 hook 帮不上。
+    //   - 视频生成不是独立的会员判断，它共用上面同一个 checkTimerAccess：
+    //     付费功能门 PaidFeatureGate（Ldl/z3$a$b）.verdictOf(VIDEO_BUILDER)
+    //     先调 checkTimerAccess，ALLOWED 就返回 null（=放行），否则返回
+    //     facade/n1 拒绝（免费版文案代号 50201，未验证为
+    //     MEMBERSHIP_UNVERIFIED）；聊天界面的视频模式关口（Lhu/o5$d0）
+    //     同样先调 checkTimerAccess，ALLOWED 才设置 activeTaskMode，
+    //     否则弹 video_builder_membership_required / _unverified 提示。
+    //     所以本开关打开后，定时任务和视频生成的客户端关口同时放行，
+    //     无法只开其中一个；视频是云端沙箱渲染，服务端仍可能在真正
+    //     生成时再拦一次，客户端放行不等于一定出片，只能真机实测。
+
+    private volatile boolean vipLogged;
+
+    private void hookVipUnlock(ClassLoader loader) throws Exception {
+        Class<?> repository = Class.forName(
+                "com.aios.osbot.membership.MembershipRepository", false, loader);
+        for (Method method : repository.getDeclaredMethods()) {
+            if (!"checkTimerAccess".equals(method.getName())
+                    || method.getParameterCount() != 1) {
+                continue;
+            }
+            hook(method).intercept(chain -> {
+                if (!vipUnlock()) return chain.proceed();
+                Object allowed = allowedAccess(loader);
+                if (allowed == null) return chain.proceed();
+                if (!vipLogged) {
+                    vipLogged = true;
+                    log(Log.INFO, TAG, "会员解锁：checkTimerAccess -> ALLOWED");
+                }
+                return allowed;
+            });
+            log(Log.INFO, TAG, "hooking MembershipRepository.checkTimerAccess (会员解锁)");
+            break;
+        }
+
+        Class<?> timerTool = Class.forName(
+                "com.aios.osbot.tools.system.TimerTool", false, loader);
+        for (Method method : timerTool.getDeclaredMethods()) {
+            String name = method.getName();
+            if (!"membershipBlockOrNull".equals(name)
+                    && !"enabledUpdateMembershipBlockOrNull".equals(name)) {
+                continue;
+            }
+            hook(method).intercept(chain -> {
+                if (!vipUnlock()) return chain.proceed();
+                return null;
+            });
+            log(Log.INFO, TAG, "hooking TimerTool." + name + " (会员解锁)");
+        }
+    }
+
+    /** 枚举 MembershipRepository$b.ALLOWED；拿不到就返回 null（走原逻辑，不硬编）。 */
+    private static Object allowedAccess(ClassLoader loader) {
+        try {
+            Class<?> access = Class.forName(
+                    "com.aios.osbot.membership.MembershipRepository$b", false, loader);
+            java.lang.reflect.Field field = access.getField("ALLOWED");
+            return field.get(null);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /** 会员解锁开关：独立于人格替换开关，默认关闭。 */
+    private boolean vipUnlock() {
+        Bundle config = config();
+        return config != null && config.getBoolean(KEY_VIP_UNLOCK, false);
+    }
+
+    // ---- 自动化流程：先规划后执行，成功流程优先复用 ----
+    //
+    // 背景：模型调界面自动化时只传一句话给
+    //   com.xiaomi.voiceassistant.UIAgentServiceForOSBot.controlApp(String)，
+    // 聊天和定时任务到点执行走的都是这一个方法。笼统的一句话（比如“打开支付宝签到”）
+    // 云端经常在首页找不到入口；把精确流程写进这句话（比如“先点我的，再点签到”）
+    // 就能走通。本 hook 不内置任何应用、任何任务的流程，只做通用机制：
+    //   1. 先规划（第一次，没有成功记录时）：给笼统指令加一段通用规划要求，
+    //      让云端先按目标应用的实际界面想清楚每一步要点的按钮文字，再依次执行，
+    //      找不到按钮就停下不要猜测、不要乱点。
+    //   2. 再复用（之后，有成功记录时优先）：分步骤指令成功执行后，把“应用|末步目标|原文”
+    //      记下来；下次同样应用、同样末步目标的笼统指令直接改写成这条成功流程，
+    //      不再重新规划。记录只认“至少两步点击且返回非错误”的执行，单步“只打开”
+    //      不算成功，不记录。
+    //   安全红线：含支付、转账、付款、下单、购买、充值、提现字样的指令一律原样放行，
+    //   绝不补全、不改写。流程只是给云端的文字，不是本地点屏幕的代码；
+    //   应用改版改了按钮文字，旧记录就可能失效，失效时关掉开关或在设置页清除记录。
+    //   记录存在模块 App 的 persona prefs 里，经 PersonaProvider 读写，见下文。
+
+    private static final String[] FLOW_SENSITIVE = {
+            "支付", "转账", "付款", "下单", "购买", "充值", "提现"};
+
+    private volatile boolean flowLogged;
+
+    private void hookFlowControl(ClassLoader loader) throws Exception {
+        Class<?> service = Class.forName(
+                "com.xiaomi.voiceassistant.UIAgentServiceForOSBot", false, loader);
+        for (Method method : service.getDeclaredMethods()) {
+            if (!"controlApp".equals(method.getName())
+                    || method.getParameterCount() != 1
+                    || method.getParameterTypes()[0] != String.class) {
+                continue;
+            }
+            hook(method).intercept(chain -> {
+                if (!flowPlan()) return chain.proceed();
+                Object arg = chain.getArg(0);
+                if (!(arg instanceof String)) return chain.proceed();
+                String query = (String) arg;
+                if (query == null || query.trim().isEmpty()) return chain.proceed();
+                if (isFlowSensitive(query)) {
+                    log(Log.INFO, TAG, "流程注入：敏感指令原样放行，不补全");
+                    return chain.proceed();
+                }
+                // 优先复用：已有成功记录，且新指令还是笼统的，就直接用记录的流程。
+                String recorded = findRecordedFlow(query);
+                if (recorded != null && countClicks(query) < 2) {
+                    if (!flowLogged) {
+                        flowLogged = true;
+                        log(Log.INFO, TAG, "流程注入：复用成功流程 -> " + recorded);
+                    } else {
+                        log(Log.INFO, TAG, "流程注入：复用成功流程");
+                    }
+                    return chain.proceed(new Object[]{recorded});
+                }
+                // 已是分步骤指令：原样执行，成功后才记录（见下方）。
+                boolean stepwise = countClicks(query) >= 2;
+                String toRun = stepwise ? query
+                        : "先规划后执行：先根据目标应用的实际界面想清楚完成这个任务要依次"
+                        + "点击哪些按钮，写出每个按钮的准确文字，再依次执行；找不到对应按钮"
+                        + "就停下，不要猜测、不要乱点。任务：" + query
+                        + "。完成后汇报每一步的结果。";
+                if (!stepwise) log(Log.INFO, TAG, "流程注入：先规划后执行");
+                Object result = chain.proceed(new Object[]{toRun});
+                // 只记录分步骤且非错误的执行；规划前缀的笼统指令不知道云端实际走了哪几步，不记录。
+                if (stepwise && !isFlowError(result)) recordFlow(query);
+                return result;
+            });
+            log(Log.INFO, TAG, "hooking UIAgentServiceForOSBot.controlApp (流程注入)");
+            break;
+        }
+    }
+
+    private boolean flowPlan() {
+        Bundle config = config();
+        return config != null && config.getBoolean(KEY_FLOW_PLAN, false);
+    }
+
+    /** 判断 controlApp 的返回是不是错误：null 或拿不到 isError 都算错误，不记录。 */
+    private static boolean isFlowError(Object result) {
+        if (result == null) return true;
+        try {
+            Object error = result.getClass().getMethod("isError").invoke(result);
+            return error instanceof Boolean && (Boolean) error;
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
+    private static boolean isFlowSensitive(String query) {
+        for (String word : FLOW_SENSITIVE) {
+            if (query.contains(word)) return true;
+        }
+        return false;
+    }
+
+    private static int countClicks(String query) {
+        int count = 0;
+        int index = 0;
+        while ((index = query.indexOf("点击", index)) >= 0) {
+            count++;
+            index += 2;
+        }
+        return count;
+    }
+
+    /** 从“打开XX”里取应用名（2~6 字），取不到返回 null。 */
+    private static String flowApp(String query) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("打开([^，,。；;\\s]{2,6})").matcher(query);
+        return m.find() ? m.group(1) : null;
+    }
+
+    /** 取最后一个“点击XX”的目标（2~6 字），取不到返回 null。 */
+    private static String flowTarget(String query) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("点击([^，,。；;\\s]{2,6})").matcher(query);
+        String target = null;
+        while (m.find()) target = m.group(1);
+        return target;
+    }
+
+    /** 在已记录流程里找“应用+末步目标”都出现在新指令里的那一条；没有返回 null。 */
+    private String findRecordedFlow(String query) {
+        Bundle config = config();
+        if (config == null) return null;
+        String store = config.getString(KEY_FLOW_STORE, "");
+        if (store == null || store.isEmpty()) return null;
+        for (String line : store.split("\n")) {
+            String entry = line.trim();
+            if (entry.isEmpty()) continue;
+            String[] parts = entry.split("\\|", 3);
+            if (parts.length < 3) continue;
+            if (query.contains(parts[0]) && query.contains(parts[1])) {
+                try {
+                    return new String(android.util.Base64.decode(parts[2],
+                            android.util.Base64.NO_WRAP), "UTF-8");
+                } catch (Throwable ignored) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** 记录一条分步骤成功流程；同应用+目标覆盖旧的，总数上限 50 条。 */
+    private void recordFlow(String query) {
+        String app = flowApp(query);
+        String target = flowTarget(query);
+        if (app == null || target == null) return;
+        try {
+            String encoded = android.util.Base64.encodeToString(
+                    query.getBytes("UTF-8"), android.util.Base64.NO_WRAP);
+            Bundle extras = new Bundle();
+            extras.putString("entry", app + "|" + target + "|" + encoded);
+            Context ctx = context();
+            if (ctx == null) return;
+            ctx.getContentResolver().call(
+                    Uri.parse("content://" + PersonaProvider.AUTHORITY),
+                    PersonaProvider.METHOD_FLOW_PUT, null, extras);
+            log(Log.INFO, TAG, "流程注入：记录成功流程 " + app + " -> " + target);
+        } catch (Throwable failure) {
+            log(Log.ERROR, TAG, "flow record failed: " + failure);
+        }
     }
 
     // ---- 配置读取 ----

@@ -114,6 +114,10 @@ class MainActivity : ComponentActivity() {
 private class UiState(
     val enabled: Boolean,
     val setEnabled: (Boolean) -> Unit,
+    val vipUnlock: Boolean,
+    val setVipUnlock: (Boolean) -> Unit,
+    val flowPlan: Boolean,
+    val setFlowPlan: (Boolean) -> Unit,
     val fixPrompt: Boolean,
     val setFixPrompt: (Boolean) -> Unit,
     val profileEnabled: Boolean,
@@ -160,6 +164,12 @@ private fun App(refreshTick: Int) {
 
     var enabled by rememberSaveable {
         mutableStateOf(prefs.getBoolean(PersonaHook.KEY_ENABLED, false))
+    }
+    var vipUnlock by rememberSaveable {
+        mutableStateOf(prefs.getBoolean(PersonaHook.KEY_VIP_UNLOCK, false))
+    }
+    var flowPlan by rememberSaveable {
+        mutableStateOf(prefs.getBoolean(PersonaHook.KEY_FLOW_PLAN, false))
     }
     var fixPrompt by rememberSaveable {
         mutableStateOf(prefs.getBoolean(PersonaHook.KEY_FIX_PROMPT, true))
@@ -229,6 +239,16 @@ private fun App(refreshTick: Int) {
         setEnabled = {
             enabled = it
             prefs.edit().putBoolean(PersonaHook.KEY_ENABLED, it).apply()
+        },
+        vipUnlock = vipUnlock,
+        setVipUnlock = {
+            vipUnlock = it
+            prefs.edit().putBoolean(PersonaHook.KEY_VIP_UNLOCK, it).apply()
+        },
+        flowPlan = flowPlan,
+        setFlowPlan = {
+            flowPlan = it
+            prefs.edit().putBoolean(PersonaHook.KEY_FLOW_PLAN, it).apply()
         },
         fixPrompt = fixPrompt,
         setFixPrompt = {
@@ -629,6 +649,10 @@ private fun StackedRow(label: String, value: String) {
 @Composable
 private fun FeaturesPage(state: UiState, bottomPadding: Dp) {
     PageColumn(bottomPadding) {
+        val context = LocalContext.current
+        val prefs = remember {
+            context.getSharedPreferences(PersonaHook.PREFS, Context.MODE_PRIVATE)
+        }
         PageTitle("功能", "人格与界面形象")
         Section("人格") {
             ArrowPreference(
@@ -679,6 +703,33 @@ private fun FeaturesPage(state: UiState, bottomPadding: Dp) {
                 onClick = state.openTools,
             )
         }
+        Section("会员解锁") {
+            SwitchPreference(
+                title = "会员解锁（定时任务 + 视频生成）",
+                summary = "绕过本地会员检查，定时任务与视频生成共用同一判断，与人格替换无关，默认关闭",
+                checked = state.vipUnlock,
+                onCheckedChange = state.setVipUnlock,
+            )
+        }
+        Hint("只放行本地检查。定时任务建好后到点能否执行仍需实测；视频生成在云端渲染，服务端仍可能在生成时再拦，不一定出片。场景如果走米家云端建规则，本地解锁帮不上。")
+        Hint("视频生成的客户端关口与定时任务共用同一会员判断，所以本开关打开后两者同时放行，不能只开其中一个。")
+        Section("自动化流程") {
+            SwitchPreference(
+                title = "先规划后执行，成功流程优先复用",
+                summary = "自动化先检索流程再执行：没记录时先规划步骤，有成功记录时优先用记录，与会员解锁无关，默认关闭",
+                checked = state.flowPlan,
+                onCheckedChange = state.setFlowPlan,
+            )
+            ArrowPreference(
+                title = "清除已记录的成功流程",
+                summary = "应用改版导致旧流程失效时点这里清掉",
+                onClick = {
+                    prefs.edit().remove(PersonaHook.KEY_FLOW_STORE).apply()
+                    android.widget.Toast.makeText(context, "已清除", android.widget.Toast.LENGTH_SHORT).show()
+                },
+            )
+        }
+        Hint("只对界面自动化生效：第一次先让云端规划步骤，某条分步骤指令成功后记下来，下次同样任务优先用它。含支付、转账、付款、下单、购买、充值、提现的指令一律不补全。")
         Section("开关") {
             SwitchPreference(
                 title = "人格替换",
