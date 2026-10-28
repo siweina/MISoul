@@ -89,7 +89,6 @@
 | `app/src/main/java/com/siweina/misoul/MainActivity.kt` | 功能页新增“会员解锁”区：一个开关 `会员解锁（定时任务 + 视频生成）` + 两条诚实边界提示；开关状态存在同一个 `persona` SharedPreferences 里 |
 | `app/build.gradle` | 版本号用于与上游区分：vip1 为 `1.0.4-vip1`（40），vip2 为 `1.0.4-vip2`（41），vip3 为 `1.0.4-vip3`（42，新增自动化流程，见 docs/flow-inject.md），vip4 为 `1.0.4-vip4`（43，固定发布签名，见 docs/signing.md） |
 | `docs/vip-unlock.md`（本文件） | 问题分析与效果说明 |
-| `.github/workflows/build.yml` | CI 构建：GitHub Actions 上跑 `assembleRelease`，产物为 `MISoul-vip` artifact，供核对后下载 |
 
 ### hook 的具体做法
 
@@ -173,7 +172,7 @@ TimerTool.enabledUpdateMembershipBlockOrNull(...)  ->  null  // = 不挡
 # 否则每次构建签名都不同，无法覆盖升级（见上游 build.gradle 注释）。
 ```
 
-CI 构建见 `.github/workflows/build.yml`，与本地同一条命令。
+本地可直接用上面的命令编译。
 
 ## 8. 与前一个开源项目的区别
 
