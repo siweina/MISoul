@@ -33,7 +33,7 @@ public final class PersonaHook extends XposedModule {
     public static final String PREFS = "persona";
 
     public static final String KEY_ENABLED = "enabled";
-    /** 超级小爱会员解锁（定时任务）：默认关闭，与人格替换开关相互独立。 */
+    /** 放行定时任务的会员校验：默认关闭，与人格替换开关相互独立。 */
     public static final String KEY_VIP_UNLOCK = "vip_unlock";
     public static final String KEY_SOUL = "soul";
     public static final String KEY_FIX_PROMPT = "fix_prompt";
@@ -322,7 +322,7 @@ public final class PersonaHook extends XposedModule {
         try {
             hookVipUnlock(loader);
         } catch (Throwable failure) {
-            // 会员解锁是可选能力：失败时不影响人格等原有功能。
+            // 定时任务放行是可选能力：失败时不影响人格等原有功能。
             log(Log.ERROR, TAG, "vip unlock skipped: " + failure);
         }
 
@@ -1564,7 +1564,7 @@ public final class PersonaHook extends XposedModule {
         return value == null || value.trim().isEmpty();
     }
 
-    // ---- 超级小爱会员解锁（定时任务 + 视频生成，共用同一判断） ----
+    // ---- 放行定时任务的会员校验（定时任务与视频生成共用同一判断） ----
     //
     // 问题（超级小爱 8.3.30.4420 / 508003030，实测包内静态分析）：
     // 非会员让小爱建「定时 AI 任务」时，模型并不是弹一个固定提示，而是说出
@@ -1627,11 +1627,11 @@ public final class PersonaHook extends XposedModule {
                 if (!on || allowed == null) return chain.proceed();
                 if (!vipLogged) {
                     vipLogged = true;
-                    log(Log.INFO, TAG, "会员解锁：checkTimerAccess -> ALLOWED");
+                    log(Log.INFO, TAG, "定时任务放行：checkTimerAccess -> ALLOWED");
                 }
                 return allowed;
             });
-            log(Log.INFO, TAG, "hooking MembershipRepository.checkTimerAccess (会员解锁)");
+            log(Log.INFO, TAG, "hooking MembershipRepository.checkTimerAccess (定时任务放行)");
             break;
         }
 
@@ -1652,7 +1652,7 @@ public final class PersonaHook extends XposedModule {
                 }
                 return on ? null : original;
             });
-            log(Log.INFO, TAG, "hooking TimerTool." + name + " (会员解锁)");
+            log(Log.INFO, TAG, "hooking TimerTool." + name + " (定时任务放行)");
         }
     }
 
@@ -1668,7 +1668,7 @@ public final class PersonaHook extends XposedModule {
         }
     }
 
-    /** 会员解锁开关：独立于人格替换开关，默认关闭。 */
+    /** 定时任务放行开关：独立于人格替换开关，默认关闭。 */
     private boolean vipUnlock() {
         Bundle config = config();
         return config != null && config.getBoolean(KEY_VIP_UNLOCK, false);
