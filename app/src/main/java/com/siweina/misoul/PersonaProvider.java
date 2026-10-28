@@ -19,7 +19,6 @@ public final class PersonaProvider extends ContentProvider {
     /** 小爱进程回传工具调用：method=usage, arg=工具名。 */
     public static final String METHOD_USAGE = "usage";
     /** 小爱进程记录成功流程：extras.entry =「应用|末步目标|Base64(流程原文)」。 */
-    public static final String METHOD_FLOW_PUT = "flow_put";
     /** prefs 里存「工具名|次数|最后调用毫秒」，一行一条。 */
     public static final String KEY_USAGE = "usage";
     /** hook 最近一次来取配置的时间（毫秒），用来判断模块是否真的活着。 */
@@ -37,12 +36,6 @@ public final class PersonaProvider extends ContentProvider {
             recordUsage(arg != null ? arg : (extras == null ? null : extras.getString("tool")));
             return null;
         }
-        if (METHOD_FLOW_PUT.equals(method)) {
-            recordFlow(extras == null ? null : extras.getString("entry"));
-            Bundle ok = new Bundle();
-            ok.putBoolean("ok", true);
-            return ok;
-        }
         if (!METHOD.equals(method)) return null;
         touchHookSeen();
         SharedPreferences prefs = getContext().getSharedPreferences(PersonaHook.PREFS, 0);
@@ -50,10 +43,6 @@ public final class PersonaProvider extends ContentProvider {
         bundle.putBoolean(PersonaHook.KEY_ENABLED, prefs.getBoolean(PersonaHook.KEY_ENABLED, false));
         bundle.putBoolean(PersonaHook.KEY_VIP_UNLOCK,
                 prefs.getBoolean(PersonaHook.KEY_VIP_UNLOCK, false));
-        bundle.putBoolean(PersonaHook.KEY_FLOW_PLAN,
-                prefs.getBoolean(PersonaHook.KEY_FLOW_PLAN, false));
-        bundle.putString(PersonaHook.KEY_FLOW_STORE,
-                prefs.getString(PersonaHook.KEY_FLOW_STORE, ""));
         bundle.putBoolean(PersonaHook.KEY_FIX_PROMPT, prefs.getBoolean(PersonaHook.KEY_FIX_PROMPT, true));
         bundle.putString(PersonaHook.KEY_NAME, prefs.getString(PersonaHook.KEY_NAME, PersonaHook.DEFAULT_NAME));
         bundle.putString(PersonaHook.KEY_SOUL, prefs.getString(PersonaHook.KEY_SOUL, ""));
@@ -138,32 +127,6 @@ public final class PersonaProvider extends ContentProvider {
         prefs.edit().putString(KEY_USAGE, out.toString()).apply();
     }
 
-    /** 记录一条成功流程；同应用+目标覆盖旧的，总数上限 50 条。 */
-    private void recordFlow(String entry) {
-        if (entry == null || entry.isEmpty()) return;
-        String[] parts = entry.split("\\|", 3);
-        if (parts.length < 3) return;
-        SharedPreferences prefs = getContext().getSharedPreferences(PersonaHook.PREFS, 0);
-        String raw = prefs.getString(PersonaHook.KEY_FLOW_STORE, "");
-        java.util.LinkedHashMap<String, String> map = new java.util.LinkedHashMap<>();
-        if (raw != null) {
-            for (String line : raw.split("\n")) {
-                String lineEntry = line.trim();
-                if (lineEntry.isEmpty()) continue;
-                String[] lineParts = lineEntry.split("\\|", 3);
-                if (lineParts.length < 3) continue;
-                map.put(lineParts[0] + "|" + lineParts[1], lineEntry);
-            }
-        }
-        map.put(parts[0] + "|" + parts[1], entry);
-        StringBuilder out = new StringBuilder();
-        int kept = 0;
-        for (String lineEntry : map.values()) {
-            if (kept++ >= 50) break;
-            out.append(lineEntry).append('\n');
-        }
-        prefs.edit().putString(PersonaHook.KEY_FLOW_STORE, out.toString()).apply();
-    }
 
     /** 从 assets/tool_groups.txt 取出所有类别前缀，供 hook 判断「未知类别默认保留」。 */
     private String groupPrefixes() {
