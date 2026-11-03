@@ -19,6 +19,7 @@ public final class PersonaProvider extends ContentProvider {
     /** 小爱进程回传工具调用：method=usage, arg=工具名。 */
     public static final String METHOD_USAGE = "usage";
     /** 小爱进程记录成功流程：extras.entry =「应用|末步目标|Base64(流程原文)」。 */
+    public static final String METHOD_FLOW_PUT = "flow_put";
     /** prefs 里存「工具名|次数|最后调用毫秒」，一行一条。 */
     public static final String KEY_USAGE = "usage";
     /** hook 最近一次来取配置的时间（毫秒），用来判断模块是否真的活着。 */
@@ -36,6 +37,10 @@ public final class PersonaProvider extends ContentProvider {
             recordUsage(arg != null ? arg : (extras == null ? null : extras.getString("tool")));
             return null;
         }
+        if (METHOD_FLOW_PUT.equals(method)) {
+            putFlow(extras == null ? null : extras.getString("entry"));
+            return null;
+        }
         if (!METHOD.equals(method)) return null;
         touchHookSeen();
         SharedPreferences prefs = getContext().getSharedPreferences(PersonaHook.PREFS, 0);
@@ -43,6 +48,10 @@ public final class PersonaProvider extends ContentProvider {
         bundle.putBoolean(PersonaHook.KEY_ENABLED, prefs.getBoolean(PersonaHook.KEY_ENABLED, false));
         bundle.putBoolean(PersonaHook.KEY_VIP_UNLOCK,
                 prefs.getBoolean(PersonaHook.KEY_VIP_UNLOCK, false));
+        bundle.putBoolean(PersonaHook.KEY_FLOW_PLAN,
+                prefs.getBoolean(PersonaHook.KEY_FLOW_PLAN, false));
+        bundle.putString(PersonaHook.KEY_FLOW_STORE,
+                prefs.getString(PersonaHook.KEY_FLOW_STORE, ""));
         bundle.putBoolean(PersonaHook.KEY_FIX_PROMPT, prefs.getBoolean(PersonaHook.KEY_FIX_PROMPT, true));
         bundle.putString(PersonaHook.KEY_NAME, prefs.getString(PersonaHook.KEY_NAME, PersonaHook.DEFAULT_NAME));
         bundle.putString(PersonaHook.KEY_SOUL, prefs.getString(PersonaHook.KEY_SOUL, ""));
@@ -125,6 +134,34 @@ public final class PersonaProvider extends ContentProvider {
                     .append(entry.getValue()[1]).append('\n');
         }
         prefs.edit().putString(KEY_USAGE, out.toString()).apply();
+    }
+
+    /** 记一条成功流程；同「应用|末步目标」覆盖旧的，最多留 50 条（丢掉最旧的）。 */
+    private void putFlow(String entry) {
+        if (entry == null || entry.trim().isEmpty()) return;
+        String trimmed = entry.trim();
+        String[] parts = trimmed.split("\\|", 3);
+        if (parts.length < 3) return;
+        String key = parts[0] + "|" + parts[1];
+        SharedPreferences prefs = getContext().getSharedPreferences(PersonaHook.PREFS, 0);
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        String raw = prefs.getString(PersonaHook.KEY_FLOW_STORE, "");
+        if (raw != null) {
+            for (String line : raw.split("\n")) {
+                String existing = line.trim();
+                if (existing.isEmpty()) continue;
+                String[] old = existing.split("\\|", 3);
+                if (old.length < 3) continue;
+                if (key.equals(old[0] + "|" + old[1])) continue;
+                lines.add(existing);
+            }
+        }
+        lines.add(trimmed);
+        StringBuilder out = new StringBuilder();
+        for (int i = Math.max(0, lines.size() - 50); i < lines.size(); i++) {
+            out.append(lines.get(i)).append('\n');
+        }
+        prefs.edit().putString(PersonaHook.KEY_FLOW_STORE, out.toString()).apply();
     }
 
 

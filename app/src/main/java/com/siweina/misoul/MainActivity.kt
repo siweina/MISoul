@@ -116,6 +116,9 @@ private class UiState(
     val setEnabled: (Boolean) -> Unit,
     val vipUnlock: Boolean,
     val setVipUnlock: (Boolean) -> Unit,
+    val flowPlan: Boolean,
+    val setFlowPlan: (Boolean) -> Unit,
+    val clearFlows: () -> Unit,
     val fixPrompt: Boolean,
     val setFixPrompt: (Boolean) -> Unit,
     val profileEnabled: Boolean,
@@ -165,6 +168,9 @@ private fun App(refreshTick: Int) {
     }
     var vipUnlock by rememberSaveable {
         mutableStateOf(prefs.getBoolean(PersonaHook.KEY_VIP_UNLOCK, false))
+    }
+    var flowPlan by rememberSaveable {
+        mutableStateOf(prefs.getBoolean(PersonaHook.KEY_FLOW_PLAN, false))
     }
     var fixPrompt by rememberSaveable {
         mutableStateOf(prefs.getBoolean(PersonaHook.KEY_FIX_PROMPT, true))
@@ -239,6 +245,15 @@ private fun App(refreshTick: Int) {
         setVipUnlock = {
             vipUnlock = it
             prefs.edit().putBoolean(PersonaHook.KEY_VIP_UNLOCK, it).apply()
+        },
+        flowPlan = flowPlan,
+        setFlowPlan = {
+            flowPlan = it
+            prefs.edit().putBoolean(PersonaHook.KEY_FLOW_PLAN, it).apply()
+        },
+        clearFlows = {
+            prefs.edit().remove(PersonaHook.KEY_FLOW_STORE).apply()
+            Toast.makeText(context, "已清除记录的流程", Toast.LENGTH_SHORT).show()
         },
         fixPrompt = fixPrompt,
         setFixPrompt = {
@@ -693,6 +708,20 @@ private fun FeaturesPage(state: UiState, bottomPadding: Dp) {
                 onClick = state.openTools,
             )
         }
+        Section("自动化") {
+            SwitchPreference(
+                title = "先规划后执行",
+                summary = "笼统的界面操作先让云端规划好按钮再执行；支付类指令原样放行",
+                checked = state.flowPlan,
+                onCheckedChange = state.setFlowPlan,
+            )
+            ArrowPreference(
+                title = "清除流程记录",
+                summary = "分步骤指令成功后会记下来供下次复用，应用改版失效时可清掉",
+                onClick = state.clearFlows,
+            )
+        }
+        Hint("只改写云端收到的任务文字，不代替你点屏幕；找不到按钮会停下，不会硬点。")
         Section("定时任务") {
             SwitchPreference(
                 title = "放行定时任务的会员校验",

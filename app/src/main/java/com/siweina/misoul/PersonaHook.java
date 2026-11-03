@@ -35,6 +35,10 @@ public final class PersonaHook extends XposedModule {
     public static final String KEY_ENABLED = "enabled";
     /** 放行定时任务的会员校验：默认关闭，与人格替换开关相互独立。 */
     public static final String KEY_VIP_UNLOCK = "vip_unlock";
+    /** 先规划后执行：笼统的界面任务补一段规划要求，成功流程优先复用。默认关闭。 */
+    public static final String KEY_FLOW_PLAN = "flow_plan";
+    /** 已记录的成功流程，一行一条「应用|末步目标|Base64(流程原文)」，上限 50 条。 */
+    public static final String KEY_FLOW_STORE = "flow_store";
     public static final String KEY_SOUL = "soul";
     public static final String KEY_FIX_PROMPT = "fix_prompt";
     public static final String KEY_NAME = "name";
@@ -324,6 +328,12 @@ public final class PersonaHook extends XposedModule {
         } catch (Throwable failure) {
             // 定时任务放行是可选能力：失败时不影响人格等原有功能。
             log(Log.ERROR, TAG, "vip unlock skipped: " + failure);
+        }
+        try {
+            hookFlowControl(loader);
+        } catch (Throwable failure) {
+            // 先规划后执行是可选能力：失败时不影响人格、定时任务放行等原有功能。
+            log(Log.ERROR, TAG, "flow control skipped: " + failure);
         }
 
         synchronized (installLock) {
@@ -1674,6 +1684,179 @@ public final class PersonaHook extends XposedModule {
         return config != null && config.getBoolean(KEY_VIP_UNLOCK, false);
     }
 
+    // ---- 先规划后执行：笼统的界面任务补规划，成功流程优先复用 ----
+    //
+    // 背景：模型调界面自动化时只传一句话给
+    //   com.xiaomi.voiceassistant.UIAgentServiceForOSBot.controlApp(String)，
+    // 聊天和定时任务到点执行走的都是这一个方法。笼统的一句话（比如「打开支付宝签到」）
+    // 云端经常在首页找不到入口；把精确流程写进这句话（比如「先点我的，再点签到」）
+    // 就能走通。本 hook 不内置任何应用、任何任务的流程，只做通用机制：
+    //   1. 先规划（没有成功记录时）：给笼统指令加一段通用规划要求，让云端先按目标应用的
+    //      实际界面想清楚每一步要点的按钮文字，再依次执行；找不到按钮就停下，不要猜测乱点。
+    //   2. 再复用（有成功记录时优先）：分步骤指令成功执行后，把「应用|末步目标|原文」
+    //      记下来；下次同样应用、同样末步目标的笼统指令直接改写成这条成功流程，
+    //      不再重新规划。记录只认「至少两步点击且返回非错误」的执行，单步「只打开」不算。
+    // 安全红线：命中支付类动作的指令一律原样放行，绝不补全、不改写。
+    //   注意「支付宝」这类应用名本身带「支付」二字，判断前必须先摘掉应用名，
+    //   否则「打开支付宝签到」会被误判成支付动作、永远走不到规划分支（1.0.4 的真实 bug）。
+    // 与 MiAIPlus 共存：两者都 hook 同一个 controlApp。本模块注册在前、先改写参数，
+    //   MiAIPlus 的 before hook 拿到的就是改写后那句，所以规划要求对它同样生效。
+    // 流程只是给云端的文字，不是本地点屏幕的代码；应用改版换了按钮文字旧记录就可能失效，
+    //   失效时关掉开关或在设置页清除记录即可。
+
+    private static final String[] FLOW_SENSITIVE = {
+            "支付", "转账", "付款", "下单", "购买", "充值", "提现", "还款", "汇款", "付款码"};
+
+    /** 名字里带支付类字眼的常见应用：判断前先摘掉，避免把「打开支付宝签到」误判成支付。 */
+    private static final String[] FLOW_APP_NAMES = {
+            "支付宝钱包", "支付宝", "微信支付", "云闪付"};
+
+    private int flowProbes;
+
+    private void hookFlowControl(ClassLoader loader) throws Exception {
+        Class<?> service = Class.forName(
+                "com.xiaomi.voiceassistant.UIAgentServiceForOSBot", false, loader);
+        for (Method method : service.getDeclaredMethods()) {
+            if (!"controlApp".equals(method.getName())
+                    || method.getParameterCount() != 1
+                    || method.getParameterTypes()[0] != String.class) {
+                continue;
+            }
+            hook(method).intercept(chain -> {
+                if (flowProbes++ < 3) {
+                    log(Log.INFO, TAG, "流程探针 controlApp：开关=" + flowPlan());
+                }
+                if (!flowPlan()) return chain.proceed();
+                Object arg = chain.getArg(0);
+                if (!(arg instanceof String)) return chain.proceed();
+                String query = (String) arg;
+                if (query == null || query.trim().isEmpty()) return chain.proceed();
+                if (isFlowSensitive(query)) {
+                    log(Log.INFO, TAG, "流程注入：支付类指令原样放行，不补全");
+                    return chain.proceed();
+                }
+                // 优先复用：已有成功记录，且新指令还是笼统的，就直接用记录的流程。
+                String recorded = findRecordedFlow(query);
+                if (recorded != null && countClicks(query) < 2) {
+                    log(Log.INFO, TAG, "流程注入：复用成功流程 -> " + recorded);
+                    return chain.proceed(new Object[]{recorded});
+                }
+                // 已是分步骤指令：原样执行，成功后才记录。
+                boolean stepwise = countClicks(query) >= 2;
+                String toRun = stepwise ? query : planFirst(query);
+                if (!stepwise) log(Log.INFO, TAG, "流程注入：先规划后执行");
+                Object result = chain.proceed(new Object[]{toRun});
+                if (stepwise && !isFlowError(result)) recordFlow(query);
+                return result;
+            });
+            log(Log.INFO, TAG, "hooking UIAgentServiceForOSBot.controlApp (先规划后执行)");
+            return;
+        }
+        log(Log.ERROR, TAG, "flow control: controlApp(String) 没找到，跳过");
+    }
+
+    /** 笼统指令前面补的通用规划要求：不含任何具体应用、具体按钮。 */
+    private static String planFirst(String query) {
+        return "先规划后执行：先根据目标应用的实际界面想清楚完成这个任务要依次点击哪些按钮，"
+                + "写出每个按钮的准确文字，再依次执行；找不到对应按钮就停下，"
+                + "不要猜测、不要乱点。任务：" + query + "。完成后汇报每一步的结果。";
+    }
+
+    private boolean flowPlan() {
+        Bundle config = config();
+        return config != null && config.getBoolean(KEY_FLOW_PLAN, false);
+    }
+
+    /** 命中支付类动作就原样放行：判断前先摘掉应用名，避免「支付宝」里的「支付」误伤。 */
+    private static boolean isFlowSensitive(String query) {
+        String stripped = query;
+        for (String app : FLOW_APP_NAMES) stripped = stripped.replace(app, " ");
+        for (String word : FLOW_SENSITIVE) {
+            if (stripped.contains(word)) return true;
+        }
+        return false;
+    }
+
+    /** 判断 controlApp 的返回是不是错误：null 或拿不到 isError 都算错误，不记录。 */
+    private static boolean isFlowError(Object result) {
+        if (result == null) return true;
+        try {
+            Object error = result.getClass().getMethod("isError").invoke(result);
+            return error instanceof Boolean && (Boolean) error;
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
+    private static int countClicks(String query) {
+        int count = 0;
+        int index = 0;
+        while ((index = query.indexOf("点击", index)) >= 0) {
+            count++;
+            index += 2;
+        }
+        return count;
+    }
+
+    /** 从「打开XX」里取应用名（2~6 字），取不到返回 null。 */
+    private static String flowApp(String query) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("打开([^，,。；;\\s]{2,6})").matcher(query);
+        return m.find() ? m.group(1) : null;
+    }
+
+    /** 取最后一个「点击XX」的目标（2~6 字），取不到返回 null。 */
+    private static String flowTarget(String query) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("点击([^，,。；;\\s]{2,6})").matcher(query);
+        String target = null;
+        while (m.find()) target = m.group(1);
+        return target;
+    }
+
+    /** 在已记录流程里找「应用+末步目标」都出现在新指令里的那一条；没有返回 null。 */
+    private String findRecordedFlow(String query) {
+        Bundle config = config();
+        if (config == null) return null;
+        String store = config.getString(KEY_FLOW_STORE, "");
+        if (store == null || store.isEmpty()) return null;
+        for (String line : store.split("\n")) {
+            String entry = line.trim();
+            if (entry.isEmpty()) continue;
+            String[] parts = entry.split("\\|", 3);
+            if (parts.length < 3) continue;
+            if (query.contains(parts[0]) && query.contains(parts[1])) {
+                try {
+                    return new String(android.util.Base64.decode(parts[2],
+                            android.util.Base64.NO_WRAP), "UTF-8");
+                } catch (Throwable ignored) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** 记录一条分步骤成功流程；同应用+目标覆盖旧的，总数上限 50 条。 */
+    private void recordFlow(String query) {
+        String app = flowApp(query);
+        String target = flowTarget(query);
+        if (app == null || target == null) return;
+        try {
+            String encoded = android.util.Base64.encodeToString(
+                    query.getBytes("UTF-8"), android.util.Base64.NO_WRAP);
+            Bundle extras = new Bundle();
+            extras.putString("entry", app + "|" + target + "|" + encoded);
+            Context ctx = context();
+            if (ctx == null) return;
+            ctx.getContentResolver().call(
+                    Uri.parse("content://" + PersonaProvider.AUTHORITY),
+                    PersonaProvider.METHOD_FLOW_PUT, null, extras);
+            log(Log.INFO, TAG, "流程注入：记录成功流程 " + app + " -> " + target);
+        } catch (Throwable failure) {
+            log(Log.ERROR, TAG, "flow record failed: " + failure);
+        }
+    }
 
     // ---- 配置读取 ----
 
