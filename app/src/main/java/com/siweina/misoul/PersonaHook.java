@@ -1705,7 +1705,8 @@ public final class PersonaHook extends XposedModule {
     //   失效时关掉开关或在设置页清除记录即可。
 
     private static final String[] FLOW_SENSITIVE = {
-            "支付", "转账", "付款", "下单", "购买", "充值", "提现", "还款", "汇款", "付款码"};
+            "支付", "转账", "付款", "下单", "购买", "充值", "提现", "还款", "汇款",
+            "付款码", "信用卡", "花呗", "借呗"};
 
     /** 名字里带支付类字眼的常见应用：判断前先摘掉，避免把「打开支付宝签到」误判成支付。 */
     private static final String[] FLOW_APP_NAMES = {
