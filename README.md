@@ -96,6 +96,8 @@ adb logcat | grep MISoul
 - 定时任务放行只处理客户端的会员判断。视频生成共用同一判断，但云端仍会查额度，免费账号即使本地放行也出不了片
 - 「先规划后执行」改写的只是交给执行方的那句任务文字，模块不代替你点屏幕；应用改版换了按钮文字，记下来的旧流程就会失效，清掉记录或关掉开关即可
 - 与 [MiAIPlus](https://github.com/astoHu1/MiAIPlus) 挂在同一个 `controlApp` 上：本模块的 hook 注册在前，改写后的那句会原样交给 MiAIPlus 的控屏实现（它在 before 阶段直接接管、不调原方法），所以规划要求对两边都生效；日志里能看到两者的 hook 依次装上。两个控屏会话相撞时会提示「已有控屏会话」，关掉其中一边的自动化能力即可
+- **快速模式不支持自定义人格**：超级小爱的「快速」模式走云端快速链路，不加载本地 agent prompt（表现为日志里没有任何 `rs.d.resolve` 调用），人格由服务端决定，客户端 hook 改不到。自定义人格只对「专家模式」生效
+- 新版（8.3.30+）人格由服务端 `AgentProfile.personality` 生成 `soul.md`，模块改为在 `rs.d.resolve` 处替换；旧版本仍走 `rs.a$a.readAsset/readFile`，两条 hook 同时保留
 - 只支持 `com.miui.voiceassist`，不支持其他小爱版本线
 
 ## 构建

@@ -24,6 +24,8 @@ import java.util.List;
  *       {@code prompt.md} 时替换人格文本、修正身份句；</li>
  *   <li>{@code ck.o0.l(String) / m(File)} —— 解析 {@code profile.json} 成 AgentProfile 之后，
  *       替换界面显示名 / 签名 / 欢迎语（profile.json 不走 readAsset，必须单独 hook）。</li>
+ *   <li>{@code rs.d.resolve} —— 新版（8.3.30+）从 AgentProfile 生成 soul.md 后经此读取，
+ *       readAsset/readFile 不再命中；这里直接替换 soul.md / prompt.md / 规则正文。</li>
  * </ul>
  *
  * <p>配置由模块 App 的 {@link PersonaProvider} 通过 ContentResolver.call 提供。
@@ -1421,6 +1423,25 @@ public final class PersonaHook extends XposedModule {
                         Object name = nameField.get(chain.getThisObject());
                         if (name instanceof String part) {
                             promptParts.merge(part, text.length(), Math::max);
+                            String soul = soul();
+                            if (SOUL.equals(part) && soul != null) {
+                                log(Log.INFO, TAG, "soul.md via resolve -> " + soul.length() + " chars override");
+                                return soul;
+                            }
+                            if (PROMPT.equals(part) && fixPrompt()) {
+                                String fixed = fixIdentity(text);
+                                if (fixed != null) {
+                                    log(Log.INFO, TAG, "prompt.md via resolve -> identity patched");
+                                    return fixed;
+                                }
+                            }
+                            if (RULES.equals(part)) {
+                                String custom = customRules();
+                                if (custom != null) {
+                                    log(Log.INFO, TAG, "tool_selection_rules.md via resolve -> override");
+                                    return custom;
+                                }
+                            }
                         }
                     } catch (Throwable ignored) {
                         // 统计失败不影响返回
