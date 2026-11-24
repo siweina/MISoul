@@ -252,6 +252,9 @@ private fun App(
     // 底栏高亮与滚动都以「目标页」为准：点击立刻改，手势滑完落定后同步。
     var targetTab by remember { mutableIntStateOf(0) }
     var programmaticScroll by remember { mutableStateOf(false) }
+    // 只有点击底栏才会设置它；手势滑动永远不设。滚动动画只由它驱动，
+    // 否则甩动（fling）还没停就被「同步高亮」触发的动画抢走，一次手势只能翻一页。
+    var pendingTarget by remember { mutableStateOf<Int?>(null) }
     var pageWidthPx by remember { mutableStateOf(0f) }
     var checkingUpdate by remember { mutableStateOf(false) }
 
@@ -448,23 +451,28 @@ private fun App(
     // 底栏高亮 = 目标页。点击立刻改，手势滑动落定后同步；不再跟 currentPage/targetPage 走，
     // 否则跨页滚动经过每一页都会让它动一次，玻璃每动一次就要重画一遍。
     androidx.compose.runtime.LaunchedEffect(pagerState) {
-        androidx.compose.runtime.snapshotFlow { pagerState.settledPage }
-            .collect { page ->
-                // 程序化滚动被打断时 pager 会在中间页短暂落定，这时不能把目标页拽回去
-                if (!programmaticScroll) targetTab = page
-            }
+        androidx.compose.runtime.snapshotFlow {
+            pagerState.isScrollInProgress to pagerState.settledPage
+        }.collect { (scrolling, page) ->
+            // 只认「停稳」这一下：甩动过程中 currentPage 会逐个越过页面，
+            // 若那时就把高亮挪过去，等于每过一页都打断一次手势。
+            if (!scrolling && pendingTarget == null) targetTab = page
+        }
     }
 
     // 由「目标页」驱动滚动，而不是在点击时算一次距离：
     // 上一次动画被取消时 pager 可能停在两页中间，若基于 currentPage 重算就会从错误起点出发，
     // 表现为「胶囊动了页面没动」。这里每帧都按当前实际偏移算剩余距离，天然能续上。
-    androidx.compose.runtime.LaunchedEffect(targetTab, pageWidthPx) {
+    androidx.compose.runtime.LaunchedEffect(pendingTarget, pageWidthPx) {
+        val target = pendingTarget ?: return@LaunchedEffect
         val width = pageWidthPx
         if (width <= 0f) return@LaunchedEffect
-        val target = targetTab
         val current = pagerState.currentPage + pagerState.currentPageOffsetFraction
         val distance = target - current
-        if (kotlin.math.abs(distance) < 0.01f) return@LaunchedEffect
+        if (kotlin.math.abs(distance) < 0.01f) {
+            pendingTarget = null
+            return@LaunchedEffect
+        }
         programmaticScroll = true
         try {
             pagerState.scroll {
@@ -483,6 +491,8 @@ private fun App(
             }
         } finally {
             programmaticScroll = false
+            // 动画完成或被用户的手势取消，都要清掉，下一次点击才会重新触发
+            if (pendingTarget == target) pendingTarget = null
         }
     }
 
@@ -491,7 +501,10 @@ private fun App(
             AppBottomBar(
                 items = items,
                 selectedIndex = targetTab,
-                onItemClick = { index -> targetTab = index },
+                onItemClick = { index ->
+                    targetTab = index
+                    pendingTarget = index
+                },
                 backdrop = backdrop,
                 isBlurActive = canBlur,
             )
@@ -501,6 +514,13 @@ private fun App(
         Box(Modifier.fillMaxSize().background(pageBg).layerBackdrop(backdrop)) {
             HorizontalPager(
                 state = pagerState,
+                // Compose 的默认值是 PagerSnapDistance.atMost(1) —— 一次甩动最多翻一页，
+                // 手速再快也被截断，摸起来就是「粘滞、快不起来」。四页押到底。
+                flingBehavior = androidx.compose.foundation.pager.PagerDefaults.flingBehavior(
+                    state = pagerState,
+                    pagerSnapDistance = androidx.compose.foundation.pager.PagerSnapDistance
+                        .atMost(items.lastIndex),
+                ),
                 modifier = Modifier.fillMaxSize()
                     .onSizeChanged {
                         pageWidthPx = it.width.toFloat()
