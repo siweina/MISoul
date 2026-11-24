@@ -34,6 +34,7 @@ import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
+import com.siweina.misoul.ui.component.AppCard
 
 /** 工具使用记录：每次工具调用由小爱进程回传，这里按类别汇总。 */
 class UsageActivity : ComponentActivity() {
@@ -83,7 +84,7 @@ private fun UsageScreen(onDone: () -> Unit) {
                 }
                 grouped.forEach { (prefix, list) ->
                     SmallTitle("${prefix} · 共 ${list.sumOf { it.count }} 次")
-                    Card(Modifier.fillMaxWidth()) {
+                    AppCard(Modifier.fillMaxWidth()) {
                         list.sortedByDescending { it.count }.forEach { row ->
                             ArrowPreference(
                                 title = row.tool,

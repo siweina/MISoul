@@ -14,15 +14,15 @@ if (keystorePropsFile.exists()) {
 android {
     namespace 'com.siweina.misoul'
     compileSdk 37
-    compileSdkMinor 0
+    compileSdkMinor 2
     buildToolsVersion '37.0.0'
 
     defaultConfig {
         applicationId 'io.github.siweina.misoul'
         minSdk 33
         targetSdk 35
-        versionCode 49
-        versionName '1.1.0'
+        versionCode 50
+        versionName '1.1.1'
     }
 
     signingConfigs {
@@ -66,9 +66,14 @@ android {
 
 dependencies {
     implementation 'androidx.activity:activity-compose:1.13.0'
-    implementation 'top.yukonga.miuix.kmp:miuix-ui:0.9.4'
-    implementation 'top.yukonga.miuix.kmp:miuix-blur:0.9.4'
-    implementation 'top.yukonga.miuix.kmp:miuix-icons:0.9.4'
-    implementation 'top.yukonga.miuix.kmp:miuix-preference:0.9.4'
+    implementation 'top.yukonga.miuix.kmp:miuix-ui:0.9.5-beta04'
+    implementation 'top.yukonga.miuix.kmp:miuix-blur:0.9.5-beta04'
+    implementation 'top.yukonga.miuix.kmp:miuix-icons:0.9.5-beta04'
+    implementation 'top.yukonga.miuix.kmp:miuix-preference:0.9.5-beta04'
+
+    // OS4 玻璃界面（GlassNavigationBar / glassPanel / GlassDropdownPreference）
+    implementation 'top.yukonga.miuix.kmp:miuix-glass:0.9.5-beta04'
+    // 取代 miuix-shader：承载 GlassDefaults / EdgeStroke / 倾斜光感
+    implementation 'top.yukonga.miuix.kmp:miuix-material:0.9.5-beta04'
     compileOnly 'io.github.libxposed:api:102.0.0'
 }

@@ -11,7 +11,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,7 +51,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.siweina.misoul.ui.component.liquid.IosLiquidGlassNavigationBar
+import com.siweina.misoul.ui.component.AppBottomBar
+import com.siweina.misoul.ui.component.AppCard
+import com.siweina.misoul.ui.component.StyleDropdownPreference
+import com.siweina.misoul.ui.theme.AppTheme
+import com.siweina.misoul.ui.theme.LocalOs4Ui
+import com.siweina.misoul.ui.theme.isInDarkTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -68,7 +72,7 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
+import top.yukonga.miuix.kmp.material.isRuntimeShaderSupported
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
@@ -80,9 +84,8 @@ import top.yukonga.miuix.kmp.icon.extended.Tune
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
+import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.theme.darkColorScheme
-import top.yukonga.miuix.kmp.theme.lightColorScheme
 
 class MainActivity : ComponentActivity() {
     // 从二级页（独立 Activity）返回时递增，触发首页重新读一次配置
@@ -104,8 +107,39 @@ class MainActivity : ComponentActivity() {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
         }
         setContent {
-            MiuixTheme(colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
-                App(resumeTick.intValue)
+            val prefs = remember {
+                getSharedPreferences(PersonaHook.PREFS, Context.MODE_PRIVATE)
+            }
+            var uiStyle by remember {
+                mutableStateOf(prefs.getString(PersonaHook.KEY_UI_STYLE, UI_STYLE_OS4) ?: UI_STYLE_OS4)
+            }
+            var themeMode by remember {
+                mutableStateOf(prefs.getString(PersonaHook.KEY_THEME_MODE, THEME_SYSTEM) ?: THEME_SYSTEM)
+            }
+            var cardGlass by remember {
+                mutableStateOf(prefs.getBoolean(PersonaHook.KEY_CARD_GLASS, true))
+            }
+            AppTheme(
+                themeMode = colorSchemeModeOf(themeMode),
+                useOs4Ui = uiStyle == UI_STYLE_OS4,
+                cardGlass = cardGlass,
+            ) {
+                App(
+                    refreshTick = resumeTick.intValue,
+                    appearance = Appearance(uiStyle, themeMode, cardGlass),
+                    onUiStyle = {
+                        uiStyle = it
+                        prefs.edit().putString(PersonaHook.KEY_UI_STYLE, it).apply()
+                    },
+                    onThemeMode = {
+                        themeMode = it
+                        prefs.edit().putString(PersonaHook.KEY_THEME_MODE, it).apply()
+                    },
+                    onCardGlass = {
+                        cardGlass = it
+                        prefs.edit().putBoolean(PersonaHook.KEY_CARD_GLASS, it).apply()
+                    },
+                )
             }
         }
     }
@@ -147,12 +181,48 @@ private class UiState(
     val info: List<InfoRow>,
     val xiaoaiVersion: String,
     val moduleVersion: String,
+    val appearance: Appearance,
+    val onUiStyle: (String) -> Unit,
+    val onThemeMode: (String) -> Unit,
+    val onCardGlass: (Boolean) -> Unit,
 )
 
+/** 界面外观的当前选择；改名或加值时同步 [Appearance] 与主题页的选项表。 */
+private data class Appearance(
+    val uiStyle: String,
+    val themeMode: String,
+    val cardGlass: Boolean,
+)
+
+private const val UI_STYLE_OS4 = "os4"
+private const val UI_STYLE_CLASSIC = "classic"
+
+private const val THEME_SYSTEM = "system"
+private const val THEME_LIGHT = "light"
+private const val THEME_DARK = "dark"
+private const val THEME_MONET_SYSTEM = "monet_system"
+private const val THEME_MONET_LIGHT = "monet_light"
+private const val THEME_MONET_DARK = "monet_dark"
+
+private fun colorSchemeModeOf(key: String): ColorSchemeMode = when (key) {
+    THEME_LIGHT -> ColorSchemeMode.Light
+    THEME_DARK -> ColorSchemeMode.Dark
+    THEME_MONET_SYSTEM -> ColorSchemeMode.MonetSystem
+    THEME_MONET_LIGHT -> ColorSchemeMode.MonetLight
+    THEME_MONET_DARK -> ColorSchemeMode.MonetDark
+    else -> ColorSchemeMode.System
+}
+
 @Composable
-private fun App(refreshTick: Int) {
+private fun App(
+    refreshTick: Int,
+    appearance: Appearance,
+    onUiStyle: (String) -> Unit,
+    onThemeMode: (String) -> Unit,
+    onCardGlass: (Boolean) -> Unit,
+) {
     val context = LocalContext.current
-    val dark = isSystemInDarkTheme()
+    val dark = isInDarkTheme()
     val prefs = remember { context.getSharedPreferences(PersonaHook.PREFS, Context.MODE_PRIVATE) }
     val defaultSoul = remember { readAsset(context, "soul.default.md") }
     val pageBg = if (dark) Color.Black else Color(0xFFF2F2F7)
@@ -358,6 +428,10 @@ private fun App(refreshTick: Int) {
         info = info,
         xiaoaiVersion = xiaoaiVersion,
         moduleVersion = moduleVersion,
+        appearance = appearance,
+        onUiStyle = onUiStyle,
+        onThemeMode = onThemeMode,
+        onCardGlass = onCardGlass,
     )
 
     val items = remember {
@@ -414,8 +488,7 @@ private fun App(refreshTick: Int) {
 
     Scaffold(
         bottomBar = {
-            IosLiquidGlassNavigationBar(
-                modifier = Modifier.padding(horizontal = 12.dp),
+            AppBottomBar(
                 items = items,
                 selectedIndex = targetTab,
                 onItemClick = { index -> targetTab = index },
@@ -772,10 +845,63 @@ private fun FeaturesPage(state: UiState, bottomPadding: Dp) {
 
 // ---------------- 设置 ----------------
 
+/**
+ * 外观：界面风格、配色、卡片柔光玻璃。
+ *
+ * 换风格是整套界面的事，不是某一页的局部开关，所以三项放在一起、放在设置页最上面。
+ * 设备画不出玻璃时（没有 runtime shader）连选项都不显示：一个选了也不生效的下拉比没有更糟。
+ */
+@Composable
+private fun AppearanceSection(state: UiState) {
+    val os4Supported = remember { isRuntimeShaderSupported() }
+    val styleNames = listOf("OS4 玻璃", "经典液态玻璃")
+    val styleIndex = if (state.appearance.uiStyle == UI_STYLE_OS4) 0 else 1
+    val modeNames = listOf("跟随系统", "浅色", "深色", "莫奈·跟随系统", "莫奈·浅色", "莫奈·深色")
+    val modeKeys = listOf(
+        THEME_SYSTEM, THEME_LIGHT, THEME_DARK,
+        THEME_MONET_SYSTEM, THEME_MONET_LIGHT, THEME_MONET_DARK,
+    )
+    val modeIndex = modeKeys.indexOf(state.appearance.themeMode).coerceAtLeast(0)
+    Section("主题") {
+        if (os4Supported) {
+            StyleDropdownPreference(
+                title = "界面风格",
+                summary = styleNames[styleIndex],
+                items = styleNames,
+                selectedIndex = styleIndex,
+                onSelectedIndexChange = {
+                    state.onUiStyle(if (it == 0) UI_STYLE_OS4 else UI_STYLE_CLASSIC)
+                },
+            )
+        }
+        StyleDropdownPreference(
+            title = "主题模式",
+            summary = modeNames[modeIndex],
+            items = modeNames,
+            selectedIndex = modeIndex,
+            onSelectedIndexChange = { state.onThemeMode(modeKeys[it]) },
+        )
+        if (os4Supported && state.appearance.uiStyle == UI_STYLE_OS4) {
+            SwitchPreference(
+                title = "卡片柔光玻璃",
+                summary = "给卡片加上描边和阴影",
+                checked = state.appearance.cardGlass,
+                onCheckedChange = state.onCardGlass,
+            )
+        }
+    }
+    if (os4Supported) {
+        Hint("OS4 玻璃是 Miuix 0.9.5 的新界面：浮起玻璃底栏、卡片描边与阴影。经典液态玻璃是模块原来那套 iOS 风格折射底栏，两套都能用，随时可切。")
+    } else {
+        Hint("这台设备不支持 runtime shader，玻璃界面画不出来，只提供经典界面。")
+    }
+}
+
 @Composable
 private fun SettingsPage(state: UiState, bottomPadding: Dp) {
     PageColumn(bottomPadding) {
-        PageTitle("设置", "入口、更新与维护")
+        PageTitle("设置", "外观、入口、更新与维护")
+        AppearanceSection(state)
         Section("入口") {
             SwitchPreference(
                 title = "隐藏桌面图标",
@@ -888,7 +1014,7 @@ private fun AboutPage(state: UiState, bottomPadding: Dp) {
 private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
     Spacer(Modifier.height(14.dp))
     SmallTitle(title)
-    Card(Modifier.fillMaxWidth(), content = content)
+    AppCard(Modifier.fillMaxWidth(), content = content)
 }
 
 @Composable

@@ -48,6 +48,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
 import java.io.File
+import com.siweina.misoul.ui.component.AppCard
 
 /**
  * 选工具规则：官方那份有 24,067 字，塞进 TextField 既不现实也不好用。
@@ -144,7 +145,7 @@ private fun RulesScreen(onDone: () -> Unit) {
                     .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 32.dp),
             ) {
                 SmallTitle("查看")
-                Card(Modifier.fillMaxWidth()) {
+                AppCard(Modifier.fillMaxWidth()) {
                     ArrowPreference(
                         title = "用其他应用查看",
                         summary = "临时文件，只适合预览；要定位/编辑请用下面的导出",
@@ -157,7 +158,7 @@ private fun RulesScreen(onDone: () -> Unit) {
                     )
                 }
                 SmallTitle("修改")
-                Card(Modifier.fillMaxWidth()) {
+                AppCard(Modifier.fillMaxWidth()) {
                     ArrowPreference(
                         title = "从文件导入",
                         summary = "改好之后选回来，整份替换",
@@ -178,7 +179,7 @@ private fun RulesScreen(onDone: () -> Unit) {
                     )
                 }
                 SmallTitle("还原")
-                Card(Modifier.fillMaxWidth()) {
+                AppCard(Modifier.fillMaxWidth()) {
                     ArrowPreference(
                         title = "恢复官方规则",
                         summary = "清掉自定义内容，回到 24,067 字那份",

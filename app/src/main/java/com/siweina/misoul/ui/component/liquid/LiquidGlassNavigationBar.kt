@@ -76,7 +76,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import com.siweina.misoul.ui.component.animation.DampedDragAnimation
 import com.siweina.misoul.ui.component.animation.InteractiveHighlight
-import androidx.compose.foundation.isSystemInDarkTheme
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -85,15 +84,16 @@ import top.yukonga.miuix.kmp.basic.NavigationItem
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.blur.blur
 import top.yukonga.miuix.kmp.blur.drawBackdrop
-import top.yukonga.miuix.kmp.blur.highlight.BloomStroke
-import top.yukonga.miuix.kmp.blur.highlight.Highlight
-import top.yukonga.miuix.kmp.blur.highlight.LightPosition
-import top.yukonga.miuix.kmp.blur.highlight.LightSource
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
-import top.yukonga.miuix.kmp.blur.sensor.rememberDeviceTilt
+import top.yukonga.miuix.kmp.material.EdgeLightSource
+import top.yukonga.miuix.kmp.material.EdgePeak
+import top.yukonga.miuix.kmp.material.EdgeStroke
+import top.yukonga.miuix.kmp.material.drawEdgeStroke
+import top.yukonga.miuix.kmp.material.sensor.rememberDeviceTilt
 import top.yukonga.miuix.kmp.theme.LocalContentColor
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import com.siweina.misoul.ui.theme.isInDarkTheme
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -105,41 +105,41 @@ import top.yukonga.miuix.kmp.basic.Text
 
 private val LocalIosTabScale = staticCompositionLocalOf { { 1f } }
 
-private val iosIndicatorSpecular: Highlight = Highlight(
+private val iosIndicatorSpecular: EdgeStroke = EdgeStroke(
     width = 1.dp,
-    alpha = 1f,
-    style = BloomStroke(
-        color = Color.White.copy(alpha = 0.12f),
-        innerBlurRadius = 2.0.dp,
-        primaryLight = LightSource(
-            position = LightPosition(0.5f, -0.3f, -0.05f),
-            color = Color.White,
-            intensity = 1f,
-        ),
-        secondaryLight = LightSource(
-            position = LightPosition(0.5f, 0.8f, -0.5f),
-            color = Color.White,
-            intensity = 0.4f,
-        ),
-        dualPeak = true,
+    bevel = 2.0.dp,
+    color = Color.White.copy(alpha = 0.12f),
+    primary = EdgeLightSource(
+        x = 0.5f,
+        y = -0.3f,
+        z = -0.05f,
+        color = Color.White,
+        intensity = 1f,
     ),
+    secondary = EdgeLightSource(
+        x = 0.5f,
+        y = 0.8f,
+        z = -0.5f,
+        color = Color.White,
+        intensity = 0.4f,
+    ),
+    peak = EdgePeak.Dual,
 )
 
-// Mirrors HighlightStyle.kt's LIGHT_REF — keep in sync.
+// 着色器的参考原点；EdgeLightSource 内部按 (x - 0.5, y - 0.7, z) 归一化。
 private const val LIGHT_REF_X = 0.5f
 private const val LIGHT_REF_Y = 0.7f
 private const val GRAVITY_DIR_THRESHOLD_SQ = 0.01f // |g_xy| > 0.1, ≈ 6° tilt
 
-/** Tracks gravity for a `dualPeak` highlight's primary light, with an extra UV-clockwise offset on top. */
+/** 让 `Dual` 峰值的描边主光源跟随重力，再叠加一个 UV 顺时针偏移。 */
 @Composable
-private fun rememberGravityRotatedHighlight(
-    base: Highlight,
+private fun rememberGravityRotatedStroke(
+    base: EdgeStroke,
     extraDegrees: Float = 0f,
-): Highlight {
-    val baseStyle = base.style as BloomStroke
+): EdgeStroke {
+    val basePrimary = base.primary
     val tilt by rememberDeviceTilt()
-    val rotatedPrimary = remember(tilt, baseStyle.primaryLight, extraDegrees) {
-        val basePrimary = baseStyle.primaryLight
+    val rotatedPrimary = remember(tilt, basePrimary, extraDegrees) {
         val gx = tilt.gravityX
         val gy = tilt.gravityY
         val gMagSq = gx * gx + gy * gy
@@ -155,16 +155,12 @@ private fun rememberGravityRotatedHighlight(
         val lx = c * lx0 - s * ly0
         val ly = s * lx0 + c * ly0
         basePrimary.copy(
-            position = LightPosition(
-                x = LIGHT_REF_X + lx,
-                y = LIGHT_REF_Y + ly,
-                z = basePrimary.position.z,
-            ),
+            x = LIGHT_REF_X + lx,
+            y = LIGHT_REF_Y + ly,
+            z = basePrimary.z,
         )
     }
-    return remember(base, rotatedPrimary) {
-        base.copy(style = baseStyle.copy(primaryLight = rotatedPrimary))
-    }
+    return remember(base, rotatedPrimary) { base.copy(primary = rotatedPrimary) }
 }
 
 @Composable
@@ -177,7 +173,7 @@ internal fun IosLiquidGlassNavigationBar(
     modifier: Modifier = Modifier,
     badge: (Int) -> (@Composable () -> Unit)? = { null },
 ) {
-    val isDark = isSystemInDarkTheme()
+    val isDark = isInDarkTheme()
     val pillShape = remember { CircleShape }
     val accentColor = MiuixTheme.colorScheme.primary
     val tabContentColor = MiuixTheme.colorScheme.onSurface
@@ -288,8 +284,8 @@ internal fun IosLiquidGlassNavigationBar(
         )
     }
 
-    val baseHighlight = rememberGravityRotatedHighlight(iosIndicatorSpecular, extraDegrees = -45f)
-    val pillHighlight = rememberGravityRotatedHighlight(iosIndicatorSpecular, extraDegrees = 90f)
+    val baseHighlight = rememberGravityRotatedStroke(iosIndicatorSpecular, extraDegrees = -45f)
+    val pillHighlight = rememberGravityRotatedStroke(iosIndicatorSpecular, extraDegrees = 90f)
 
     // 胶囊用 CombinedBackdrop（页面 + 隐藏的高亮底栏）采样，让选中图标也参与折射，
     // 按压时靠 layerBlock 的 pressProgress 放大 —— 这是「按住会扩张」的来源。
@@ -388,7 +384,7 @@ internal fun IosLiquidGlassNavigationBar(
                                             refractionAmount = 24.dp.toPx(),
                                         )
                                     },
-                                    highlight = { baseHighlight.copy(alpha = 0.75f) },
+                                    onDrawFront = { drawEdgeStroke(pillShape, baseHighlight, 0.75f) },
                                     layerBlock = {
                                         val width = size.width.coerceAtLeast(1f)
                                         val s = lerp(1f, 1f + 16.dp.toPx() / width, dampedDrag.pressProgress)
@@ -469,7 +465,9 @@ internal fun IosLiquidGlassNavigationBar(
                                         chromaticAberration = 0.5f,
                                     )
                                 },
-                                highlight = { pillHighlight.copy(alpha = dampedDrag.pressProgress) },
+                                onDrawFront = {
+                                    drawEdgeStroke(pillShape, pillHighlight, dampedDrag.pressProgress)
+                                },
                                 layerBlock = {
                                     scaleX = dampedDrag.scaleX
                                     scaleY = dampedDrag.scaleY

@@ -72,6 +72,15 @@ public final class PersonaHook extends XposedModule {
     /** 工具描述深度压缩（实验）：按块打分 + 每工具硬上限。 */
     public static final String KEY_TOOL_DEEP = "tool_deep";
 
+    // ---- 界面外观（只影响模块自己的 App，不参与注入） ----
+
+    /** 界面风格：os4 = OS4 玻璃界面，classic = 经典液态玻璃。 */
+    public static final String KEY_UI_STYLE = "ui_style";
+    /** 配色：system / light / dark / monet_system / monet_light / monet_dark。 */
+    public static final String KEY_THEME_MODE = "theme_mode";
+    /** OS4 卡片是否加描边与阴影（关掉仍是玻璃，只是没有那道柔光边框）。 */
+    public static final String KEY_CARD_GLASS = "card_glass";
+
     /** 「选工具规则」的内置精简版，作为编辑器的初始内容；清空保存即回到官方那份。 */
     public static final String COMPACT_RULES =
             "# 选工具规则（精简版）\n\n"

@@ -45,6 +45,7 @@ import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
+import com.siweina.misoul.ui.component.AppCard
 
 /** 工具筛选：按类别决定这次会话里给模型看哪些工具。 */
 class ToolsActivity : ComponentActivity() {
@@ -142,7 +143,7 @@ private fun ToolsScreen(onDone: () -> Unit) {
                     .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 32.dp),
             ) {
                 SmallTitle("使用情况")
-                Card(Modifier.fillMaxWidth()) {
+                AppCard(Modifier.fillMaxWidth()) {
                     ArrowPreference(
                         title = "查看使用记录",
                         summary = "各个工具被调用了多少次、最近一次是什么时候",
@@ -155,7 +156,7 @@ private fun ToolsScreen(onDone: () -> Unit) {
                 }
 
                 SmallTitle("预设")
-                Card(Modifier.fillMaxWidth()) {
+                AppCard(Modifier.fillMaxWidth()) {
                     Row(
                         Modifier.fillMaxWidth().padding(12.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -215,7 +216,7 @@ private fun ToolsScreen(onDone: () -> Unit) {
                 Hint("筛选按请求生效，改完直接发消息即可，不用重启小爱。")
 
                 SmallTitle("类别")
-                Card(Modifier.fillMaxWidth()) {
+                AppCard(Modifier.fillMaxWidth()) {
                     groups.forEach { group ->
                         SwitchPreference(
                             title = group.label.ifBlank { group.prefix },
