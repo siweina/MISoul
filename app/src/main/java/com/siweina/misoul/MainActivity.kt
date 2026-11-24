@@ -451,47 +451,46 @@ private fun App(
     // 底栏高亮 = 目标页。点击立刻改，手势滑动落定后同步；不再跟 currentPage/targetPage 走，
     // 否则跨页滚动经过每一页都会让它动一次，玻璃每动一次就要重画一遍。
     androidx.compose.runtime.LaunchedEffect(pagerState) {
-        androidx.compose.runtime.snapshotFlow {
-            pagerState.isScrollInProgress to pagerState.settledPage
-        }.collect { (scrolling, page) ->
-            // 只认「停稳」这一下：甩动过程中 currentPage 会逐个越过页面，
-            // 若那时就把高亮挪过去，等于每过一页都打断一次手势。
-            if (!scrolling && pendingTarget == null) targetTab = page
-        }
+        // 跟 currentPage 而不是 settledPage：拖过半页它就变了，底栏的高亮和拖动同时进行。
+        // 等停稳再动会让底栏看起来和手势脱钩（完全到达另一页后才补一段动画）。
+        androidx.compose.runtime.snapshotFlow { pagerState.currentPage }
+            .collect { page ->
+                // 点击底栏触发的动画期间由 pendingTarget 说了算，别被中途的 currentPage 拽回去
+                if (pendingTarget == null) targetTab = page
+            }
     }
 
     // 由「目标页」驱动滚动，而不是在点击时算一次距离：
     // 上一次动画被取消时 pager 可能停在两页中间，若基于 currentPage 重算就会从错误起点出发，
     // 表现为「胶囊动了页面没动」。这里每帧都按当前实际偏移算剩余距离，天然能续上。
-    androidx.compose.runtime.LaunchedEffect(pendingTarget, pageWidthPx) {
+    androidx.compose.runtime.LaunchedEffect(pendingTarget) {
         val target = pendingTarget ?: return@LaunchedEffect
-        val width = pageWidthPx
-        if (width <= 0f) return@LaunchedEffect
         val current = pagerState.currentPage + pagerState.currentPageOffsetFraction
-        val distance = target - current
-        if (kotlin.math.abs(distance) < 0.01f) {
+        if (kotlin.math.abs(target - current) < 0.01f) {
             pendingTarget = null
             return@LaunchedEffect
         }
         programmaticScroll = true
         try {
-            pagerState.scroll {
+            // UserInput 优先级：手指一按就能抢走这段动画，不会出现「点了底栏之后拖不动」
+            pagerState.scroll(androidx.compose.foundation.MutatePriority.UserInput) {
+                val info = pagerState.layoutInfo
+                val pageSize = (info.pageSize + info.pageSpacing).toFloat()
+                if (pageSize <= 0f) return@scroll
+                // 每帧按当前实际偏移算剩余量，动画被中途取消也能从真实位置续上
+                val remaining = (target - pagerState.currentPage - pagerState.currentPageOffsetFraction) * pageSize
                 var consumed = 0f
                 androidx.compose.animation.core.animate(
                     initialValue = 0f,
-                    targetValue = distance * width,
-                    animationSpec = androidx.compose.animation.core.tween(
-                        durationMillis = (240 + 90 * kotlin.math.abs(distance)).toInt(),
-                        easing = androidx.compose.animation.core.FastOutSlowInEasing,
-                    ),
+                    targetValue = remaining,
+                    animationSpec = com.siweina.misoul.ui.theme.PagerNavigationSpringSpec,
                 ) { value, _ ->
-                    scrollBy(value - consumed)
-                    consumed = value
+                    consumed += scrollBy(value - consumed)
                 }
             }
         } finally {
             programmaticScroll = false
-            // 动画完成或被用户的手势取消，都要清掉，下一次点击才会重新触发
+            // 动画完成或被手势取消都要清掉，下一次点击才会重新触发
             if (pendingTarget == target) pendingTarget = null
         }
     }
@@ -514,19 +513,15 @@ private fun App(
         Box(Modifier.fillMaxSize().background(pageBg).layerBackdrop(backdrop)) {
             HorizontalPager(
                 state = pagerState,
-                // Compose 的默认值是 PagerSnapDistance.atMost(1) —— 一次甩动最多翻一页，
-                // 手速再快也被截断，摸起来就是「粘滞、快不起来」。四页押到底。
-                flingBehavior = androidx.compose.foundation.pager.PagerDefaults.flingBehavior(
-                    state = pagerState,
-                    pagerSnapDistance = androidx.compose.foundation.pager.PagerSnapDistance
-                        .atMost(items.lastIndex),
-                ),
+                // 用 pager 自己的惯性：一次手势落一到下一页，速度自然衰减。
+                // 之前放开到 atMost(页数-1) 会让快速甩动一路冲到最后一页，那是过头的。
+                overscrollEffect = null,
                 modifier = Modifier.fillMaxSize()
                     .onSizeChanged {
                         pageWidthPx = it.width.toFloat()
                     },
-                // 四页全部预组：切换要滑过中间页，不预组就会在那页掉一帧
-                beyondViewportPageCount = 3,
+                // 不再跳页，只预组相邻一页即可；全组四页会让每帧多画两页玻璃
+                beyondViewportPageCount = 1,
             ) { index ->
                 when (index) {
                     0 -> OverviewPage(state, barHeight)

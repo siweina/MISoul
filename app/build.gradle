@@ -21,8 +21,8 @@ android {
         applicationId 'io.github.siweina.misoul'
         minSdk 33
         targetSdk 35
-        versionCode 51
-        versionName '1.1.2'
+        versionCode 52
+        versionName '1.1.3'
     }
 
     signingConfigs {
